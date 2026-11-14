@@ -5,6 +5,9 @@ import bcrypt from 'bcryptjs';
 import axios from 'axios';
 import validator from 'validator';
 
+// OTP is ON by default. Set OTP_ENABLED=false in .env to turn it off.
+const OTP_ENABLED = process.env.OTP_ENABLED !== 'false';
+
 const generateToken = (userId, role) => {
   return jwt.sign({ userId, role }, process.env.SECRET_KEY || process.env.JWT_SECRET, {
     expiresIn: '30d',
@@ -14,8 +17,12 @@ const generateToken = (userId, role) => {
 export const register = async (req, res) => {
   const { name, email, password, otp, role } = req.body;
   try {
-    if (!name || !email || !password || !otp) {
-      return res.status(400).json({ message: 'All fields including OTP are required' });
+    if (!name || !email || !password || (OTP_ENABLED && !otp)) {
+      return res.status(400).json({
+        message: OTP_ENABLED
+          ? 'All fields including OTP are required'
+          : 'Name, email and password are required',
+      });
     }
 
     if (!validator.isEmail(email)) {
@@ -27,22 +34,24 @@ export const register = async (req, res) => {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
 
-    const otpRecord = await Otp.findOne({ email });
-    if (!otpRecord) {
-      return res.status(400).json({ message: 'OTP not requested or expired. Please request a new OTP.' });
-    }
+    if (OTP_ENABLED) {
+      const otpRecord = await Otp.findOne({ email });
+      if (!otpRecord) {
+        return res.status(400).json({ message: 'OTP not requested or expired. Please request a new OTP.' });
+      }
 
-    if (otpRecord.otpExpires && otpRecord.otpExpires < new Date()) {
+      if (otpRecord.otpExpires && otpRecord.otpExpires < new Date()) {
+        await Otp.deleteOne({ email });
+        return res.status(400).json({ message: 'OTP has expired. Please request a new one.' });
+      }
+
+      const isMatch = await bcrypt.compare(otp.toString(), otpRecord.otp);
+      if (!isMatch) {
+        return res.status(400).json({ message: 'Invalid OTP code' });
+      }
+
       await Otp.deleteOne({ email });
-      return res.status(400).json({ message: 'OTP has expired. Please request a new one.' });
     }
-
-    const isMatch = await bcrypt.compare(otp.toString(), otpRecord.otp);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid OTP code' });
-    }
-
-    await Otp.deleteOne({ email });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -103,15 +112,14 @@ export const login = async (req, res) => {
 
     const token = generateToken(user._id, user.role);
 
-    
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 30 * 24 * 60 * 60 * 1000, 
+      maxAge: 30 * 24 * 60 * 60 * 1000,
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     });
 
-    res.status(200).json({  
+    res.status(200).json({
       _id: user._id,
       name: user.name,
       email: user.email,
@@ -159,6 +167,15 @@ export const generateOtp = async (req, res) => {
       return res.status(400).json({ message: 'User already exists with this email address' });
     }
 
+    // OTP disabled: tell the frontend to skip the verify step
+    if (!OTP_ENABLED) {
+      return res.status(200).json({
+        otpRequired: false,
+        message: 'OTP is disabled',
+        email,
+      });
+    }
+
     const rawOtp = Math.floor(1000 + Math.random() * 9000).toString();
     const hashedOtp = await bcrypt.hash(rawOtp, 10);
 
@@ -193,6 +210,7 @@ export const generateOtp = async (req, res) => {
     }
 
     res.status(200).json({
+      otpRequired: true,
       message: 'OTP sent to your email address',
       email: email,
       name: userName,

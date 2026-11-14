@@ -21,6 +21,28 @@ const Register = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
+  // Shared by both flows: with OTP (otp string) and without OTP (otp undefined)
+  const completeRegistration = async (otpValue) => {
+    const selectedRole = isClickedBookedNow ? 'customer' : role;
+    const payload = { name, email, password, role: selectedRole };
+    if (otpValue) payload.otp = otpValue;
+
+    const response = await api.post('/auth/register', payload);
+    const userData = response.data;
+    dispatch(authSuccess({ user: userData }));
+    toast.success(`Account created! Welcome, ${userData.name}!`);
+
+    if (userData.role === 'admin') {
+      navigate('/admin-dashboard');
+    } else if (userData.role === 'manager') {
+      navigate('/manager-dashboard');
+    } else if (userData.role === 'employee') {
+      navigate('/employee-dashboard');
+    } else {
+      navigate('/customer-dashboard');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name || !email || !password) {
@@ -36,12 +58,19 @@ const Register = () => {
     dispatch(authStart());
     try {
       const response = await api.post('/auth/generate-otp', { email, name });
+
+      // OTP disabled on the backend: register straight away
+      if (response.data.otpRequired === false) {
+        await completeRegistration();
+        return;
+      }
+
       toast.success(response.data.message || 'OTP sent to your email!');
       setIsOtpSent(true);
       dispatch(authFailure());
     } catch (error) {
-      console.error('OTP request error:', error);
-      const msg = error.response?.data?.message || 'Failed to send OTP. Please try again.';
+      console.error('Signup error:', error);
+      const msg = error.response?.data?.message || 'Failed to sign up. Please try again.';
       dispatch(authFailure(msg));
       toast.error(msg);
     }
@@ -69,21 +98,7 @@ const Register = () => {
 
     dispatch(authStart());
     try {
-      const selectedRole = isClickedBookedNow ? 'customer' : role;
-      const response = await api.post('/auth/register', { name, email, password, otp, role: selectedRole });
-      const userData = response.data;
-      dispatch(authSuccess({ user: userData }));
-      toast.success(`Account created & verified! Welcome, ${userData.name}!`);
-
-      if (userData.role === 'admin') {
-        navigate('/admin-dashboard');
-      } else if (userData.role === 'manager') {
-        navigate('/manager-dashboard');
-      } else if (userData.role === 'employee') {
-        navigate('/employee-dashboard');
-      } else {
-        navigate('/customer-dashboard');
-      }
+      await completeRegistration(otp);
     } catch (error) {
       console.error('Registration verification error:', error);
       const msg = error.response?.data?.message || 'OTP verification failed';
@@ -209,7 +224,7 @@ const Register = () => {
         </p>
       </div>
 
-      {/* OTP Verification Modal */}
+      {/* OTP Verification Modal (only shown when OTP is enabled on the backend) */}
       {isOtpSent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl p-6 relative">

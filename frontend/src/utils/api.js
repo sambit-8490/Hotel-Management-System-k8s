@@ -1,7 +1,6 @@
 import axios from 'axios';
 
-// let url = "http://localhost:5000";
-let url = "https://hotel-management-system-ashy.vercel.app"; 
+const url = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: `${url}/api`,
